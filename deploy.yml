@@ -1,0 +1,240 @@
+name: Deploy to AWS
+env:
+  "DEV_S3_BUCKET_NAME": "elasticbeanstalk-xx-xxxx-x-xxxxxxxxxxxx"
+  "DEV_EBS_APPLICATION_NAME": "laravel-dev-app"
+  "DEV_EBS_ENVIRONMENT_NAME": "laravel-dev-env"
+  "DEV_AWS_REGION": "xx-xxxx-x"
+  "DEV_DEPLOY_PACKAGE_NAME": "laravel-php-app-${{github.sha}}.zip"
+  "STAGE_S3_BUCKET_NAME": "elasticbeanstalk-xx-xxxx-x-xxxxxxxxxxxx"
+  "STAGE_EBS_APPLICATION_NAME": "laravel-stage-app"
+  "STAGE_EBS_ENVIRONMENT_NAME": "laravel-stage-env"
+  "STAGE_AWS_REGION": "xx-xxxx-x"
+  "STAGE_DEPLOY_PACKAGE_NAME": "laravel-php-app-${{github.sha}}.zip"
+  "PROD_S3_BUCKET_NAME": "elasticbeanstalk-xx-xxxx-x-xxxxxxxxxxxx"
+  "PROD_EBS_APPLICATION_NAME": "laravel-prod-app"
+  "PROD_EBS_ENVIRONMENT_NAME": "laravel-prod-env"
+  "PROD_AWS_REGION": "xx-xxxx-x"
+  "PROD_DEPLOY_PACKAGE_NAME": "laravel-php-app-${{github.sha}}.zip"
+
+on:
+  push:
+    branches:
+      - main
+      - stage
+      - develop
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-production:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Production - Clone the repository
+        uses: actions/checkout@v3
+
+      - name: Production - Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.1
+          tools: composer:v2
+          coverage: none
+
+      - name: Production - Setup NodeJs
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Production - Update NPM
+        run: npm install -g npm
+
+      - name: Production - Print versions
+        run: |
+          echo -e 'PHP Version\n===========' && php -v && \
+          echo -e '\n\nComposer Version\n================' && composer --version && \
+          echo -e '\n\nNode Version\n============' && node -v && \
+          echo -e '\n\nNPM Version\n===========' && npm -v
+
+      - name: Production - Install Project Dependencies
+        run: composer install --optimize-autoloader --no-dev --prefer-dist && composer dump-autoload -o
+
+      - name: Production - Build project assets
+        run: npm install && npm run prod && rm -rf node_modules
+
+      - name: Production - Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          node-version: 16
+          role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_PROD }}
+          aws-region: ${{env.PROD_AWS_REGION}}
+
+      - name: Production - Create .env file from secrets manager secret
+        run: |
+          aws secretsmanager get-secret-value \
+          --secret-id prod/xxxx \
+          --query SecretString \
+          --output text > .env
+
+      - name: Production - Zip the deployment artifact
+        run: zip -r ${{env.PROD_DEPLOY_PACKAGE_NAME}} ./ -x *.git*
+
+      - name: Production - Upload Deployment to S3 Bucket
+        run: aws s3 cp ${{env.PROD_DEPLOY_PACKAGE_NAME}} s3://${{env.PROD_S3_BUCKET_NAME}}/
+
+      - name: Production - Create new Elastic Beanstalk Application Version
+        run: |
+          aws elasticbeanstalk create-application-version \
+          --application-name ${{env.PROD_EBS_APPLICATION_NAME}} \
+          --source-bundle S3Bucket="${{env.PROD_S3_BUCKET_NAME}}",S3Key="${{env.PROD_DEPLOY_PACKAGE_NAME}}" \
+          --version-label "ver-${{ github.sha }}" \
+          --description "commit-sha-${{ github.sha }}"
+
+      - name: Production - Deploy new Elastic Beanstalk Application Version
+        run: aws elasticbeanstalk update-environment --environment-name ${{env.PROD_EBS_ENVIRONMENT_NAME}} --version-label "ver-${{ github.sha }}" --option-settings "Namespace=aws:elasticbeanstalk:application:environment,OptionName=DATABASE_ENVIRONMENT,Value=production"
+
+      - name: Production - Print Success Message on Completion
+        run: echo "New version (ver-${{ github.sha }}) based on commit (${{ github.sha }}) successfully deployed to production environment"
+
+  deploy-staging:
+    if: github.ref == 'refs/heads/stage'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Staging - Clone the repository
+        uses: actions/checkout@v3
+
+      - name: Staging - Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.1
+          tools: composer:v2
+          coverage: none
+
+      - name: Staging - Setup NodeJs
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Staging - Update NPM
+        run: npm install -g npm
+
+      - name: Staging - Print versions
+        run: |
+          echo -e 'PHP Version\n===========' && php -v && \
+          echo -e '\n\nComposer Version\n================' && composer --version && \
+          echo -e '\n\nNode Version\n============' && node -v && \
+          echo -e '\n\nNPM Version\n===========' && npm -v
+
+      - name: Staging - Install Project Dependencies
+        run: composer install --optimize-autoloader --no-dev --prefer-dist && composer dump-autoload -o
+
+      - name: Staging - Build project assets
+        run: npm install && npm run prod && rm -rf node_modules
+
+      - name: Staging - Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          node-version: 16
+          role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_STAGE }}
+          aws-region: ${{env.STAGE_AWS_REGION}}
+
+      - name: Staging - Create .env file from secrets manager secret
+        run: |
+          aws secretsmanager get-secret-value \
+          --secret-id stage/xxxx \
+          --query SecretString \
+          --output text > .env
+
+      - name: Staging - Zip the deployment artifact
+        run: zip -r ${{env.STAGE_DEPLOY_PACKAGE_NAME}} ./ -x *.git*
+
+      - name: Staging - Upload Deployment to S3 Bucket
+        run: aws s3 cp ${{env.STAGE_DEPLOY_PACKAGE_NAME}} s3://${{env.STAGE_S3_BUCKET_NAME}}/
+
+      - name: Staging - Create new Elastic Beanstalk Application Version
+        run: |
+          aws elasticbeanstalk create-application-version \
+          --application-name ${{env.STAGE_EBS_APPLICATION_NAME}} \
+          --source-bundle S3Bucket="${{env.STAGE_S3_BUCKET_NAME}}",S3Key="${{env.STAGE_DEPLOY_PACKAGE_NAME}}" \
+          --version-label "ver-${{ github.sha }}" \
+          --description "commit-sha-${{ github.sha }}"
+
+      - name: Staging - Deploy new Elastic Beanstalk Application Version
+        run: aws elasticbeanstalk update-environment --environment-name ${{env.STAGE_EBS_ENVIRONMENT_NAME}} --version-label "ver-${{ github.sha }}" --option-settings "Namespace=aws:elasticbeanstalk:application:environment,OptionName=DATABASE_ENVIRONMENT,Value=staging"
+
+      - name: Staging - Print Success Message on Completion
+        run: echo "New version (ver-${{ github.sha }}) based on commit (${{ github.sha }}) successfully deployed to staging environment"
+
+  deploy-development:
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Development - Clone the repository
+        uses: actions/checkout@v3
+
+      - name: Development - Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.1
+          tools: composer:v2
+          coverage: none
+
+      - name: Development - Setup NodeJs
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Development - Update NPM
+        run: npm install -g npm
+
+      - name: Development - Print versions
+        run: |
+          echo -e 'PHP Version\n===========' && php -v && \
+          echo -e '\n\nComposer Version\n================' && composer --version && \
+          echo -e '\n\nNode Version\n============' && node -v && \
+          echo -e '\n\nNPM Version\n===========' && npm -v
+
+      - name: Development - Install Project Dependencies
+        run: composer install --optimize-autoloader --prefer-dist && composer dump-autoload -o
+
+      - name: Development - Build project assets
+        run: npm install && npm run dev && rm -rf node_modules
+
+      - name: Development - Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          node-version: 16
+          role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_DEV }}
+          aws-region: ${{env.DEV_AWS_REGION}}
+
+      - name: Development - Create .env file from secrets manager secret
+        run: |
+          aws secretsmanager get-secret-value \
+          --secret-id dev/xxxx \
+          --query SecretString \
+          --output text > .env
+
+      - name: Development - Zip the deployment artifact
+        run: zip -r ${{env.DEV_DEPLOY_PACKAGE_NAME}} ./ -x *.git*
+
+      - name: Development - Upload Deployment to S3 Bucket
+        run: aws s3 cp ${{env.DEV_DEPLOY_PACKAGE_NAME}} s3://${{env.DEV_S3_BUCKET_NAME}}/
+
+      - name: Development - Create new Elastic Beanstalk Application Version
+        run: |
+          aws elasticbeanstalk create-application-version \
+          --application-name ${{env.DEV_EBS_APPLICATION_NAME}} \
+          --source-bundle S3Bucket="${{env.DEV_S3_BUCKET_NAME}}",S3Key="${{env.DEV_DEPLOY_PACKAGE_NAME}}" \
+          --version-label "ver-${{ github.sha }}" \
+          --description "commit-sha-${{ github.sha }}"
+
+      - name: Development - Deploy new Elastic Beanstalk Application Version
+        run: aws elasticbeanstalk update-environment --environment-name ${{env.DEV_EBS_ENVIRONMENT_NAME}} --version-label "ver-${{ github.sha }}" --option-settings "Namespace=aws:elasticbeanstalk:application:environment,OptionName=DATABASE_ENVIRONMENT,Value=development"
+
+      - name: Development - Print Success Message on Completion
+        run: echo "New version (ver-${{ github.sha }}) based on commit (${{ github.sha }}) successfully deployed to development environment"
+
