@@ -57,6 +57,7 @@ Another example is a particular route in our application that fetches all of the
 As a POC for this initiative, I took a single route and created a mirror of the route in the new proposed modular structure.  
 Here is the ***[old version](https://github.com/DanishMMir/IxDF/blob/e505a8a7599d8f96b5c366d023339f761b6ef4e9/PackageController_old_Implementation.php)*** implementation of the route.  
 Here is the ***[new version](https://github.com/DanishMMir/IxDF/blob/e505a8a7599d8f96b5c366d023339f761b6ef4e9/PackageController_new_implementation.php)*** implementation of the route.  
+There might not be much visual difference at first, but providing the class with all the dependencies and using eager-loading where required in the methods used significantly improves the performance.
 
 ***[Here](https://github.com/DanishMMir/IxDF/blob/e505a8a7599d8f96b5c366d023339f761b6ef4e9/deploy.yml)*** is also a deployment file that was created as part of the migration process.
 The difference in resource usage was tremendous, as the new implementation reduced the duplicated querying by half. The response time was improved by 4x because of it.  
